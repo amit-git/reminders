@@ -42,19 +42,24 @@ func main() {
 
 	RemsFilePath = tasksFolder + "/current"
 	fmt.Println("Current Reminders are stored in ", RemsFilePath)
-	loadReminders()
+
+	hasStaleReminders := loadReminders()
+	if hasStaleReminders {
+		// cleanup stale reminders
+		saveAllReminders()
+	}
 
 	for {
 		cmd := readCmd()
 		processCmd(cmd)
 	}
-
 }
 
 func processCmd(cmd string) {
 	if strings.HasPrefix(cmd, "a ") {
 		if err := addReminder(cmd); err == nil {
 			saveAllReminders()
+			fmt.Println("Saved.")
 		} else {
 			fmt.Println("Error in processing ", cmd, " :: ", err.Error())
 		}
@@ -129,6 +134,7 @@ func showHelp() {
 func viewReminders(cond func(t time.Time) bool) {
 	fmt.Println("\nReminders .....................")
 	fmt.Println()
+	// TODO - sort based on reminder times
 	remIdsSorted := getSortedReminderIds()
 	for _, i := range remIdsSorted {
 		r := rems[i]
@@ -177,8 +183,6 @@ func addReminder(remCmd string) error {
 		at:   ts,
 	}
 	curIndex = curIndex + 1
-	fmt.Println("Rems size ", len(rems))
-
 	return nil
 }
 
@@ -196,7 +200,6 @@ func parseReminder(cmd string) (string, time.Time, error) {
 }
 
 func getFile(fileName string) *os.File {
-	fmt.Println("Opening file path ", fileName)
 	filePtr, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR|os.O_SYNC, 0664)
 	if err != nil {
 		fmt.Printf("Unable to open %s :: %s", fileName, err.Error())
@@ -210,7 +213,6 @@ func saveAllReminders() {
 	defer f.Close()
 
 	var lines string
-	fmt.Println("Saving ", len(rems), " amount of reminders")
 	for _, rem := range rems {
 		lines = lines + fmt.Sprintf("%s\t%s\n", rem.desc, rem.at.Format(TimeFormat))
 	}
@@ -222,26 +224,32 @@ func saveAllReminders() {
 	}
 }
 
-func loadReminders() {
-	fileScanner := bufio.NewScanner(getFile(RemsFilePath))
-	// fileScanner.Split(bufio.ScanLines)
+func loadReminders() bool {
+	f := getFile(RemsFilePath)
+	fileScanner := bufio.NewScanner(f)
+	expiredRemindersFound := false
 	for fileScanner.Scan() {
 		line := fileScanner.Text()
 		lineParts := strings.Split(line, "\t")
 		if len(lineParts) == 2 {
 			atValue, err := time.Parse(TimeFormat, lineParts[1])
 			if err == nil {
-				rems[curIndex] = Rem{
-					desc: lineParts[0],
-					at:   atValue,
+				if !isGreater(time.Now(), atValue) {
+					rems[curIndex] = Rem{
+						desc: lineParts[0],
+						at:   atValue,
+					}
+					curIndex = curIndex + 1
+				} else {
+					expiredRemindersFound = true
 				}
-				curIndex = curIndex + 1
 			} else {
 				fmt.Println("Error loading reminder date ", lineParts[1], " :: ", err.Error())
 			}
 		}
 	}
 	fmt.Printf("Loaded current reminders :: %d\n", len(rems))
+	return expiredRemindersFound
 }
 
 func getSortedReminderIds() []int {
